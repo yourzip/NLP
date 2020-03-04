@@ -42,6 +42,8 @@ class NPLM(nn.Module):
     data_size = 0
     for i, data in enumerate(dataloader):
       inputs, labels = data
+      inputs = inputs.to(device)
+      labels = labels.to(device)
       outputs = self.forward(inputs)
       for j in range(batch_size):
         values, indices = torch.max(outputs[j], 0)
@@ -49,7 +51,7 @@ class NPLM(nn.Module):
         test_loss += loss.item()
         if indices.item() == labels[j].item():
           acc += 1
-      data_size += 1
+      data_size += inputs.size()[0]
     test_acc = acc/data_size
     test_loss = test_loss/data_size
     return test_loss, test_acc
@@ -59,45 +61,48 @@ def run():
   if not os.path.exists('models'):
     os.makedirs('models')
   print("loading data...")
-  wiki_data = WikiDataset(num=500, n=4)
-  train_data = wiki_data[:400]
-  val_data = wiki_data[400:450]
-  test_data = wiki_data[450:]
+  train_data = WikiDataset(train=True, n=n)
+  test_data = WikiDataset(train=False, n=n)
   train_dataloader = DataLoader(train_data, batch_size=batch_size,
                                 shuffle=False, num_workers=1)
-  val_dataloader = DataLoader(val_data, batch_size=batch_size,
-                              shuffle=False, num_workers=1)
   test_dataloader = DataLoader(test_data, batch_size=batch_size,
                                shuffle=False, num_workers=1)
   print("done")
-  nplm = NPLM(len(voca)).to(device)
+  nplm = NPLM(len(train_data[0][0][0])).to(device)
   # criterion = nn.MSELoss()
   # loss함수랑 optimizer를 모델 안에 넣으면 안되나?
   criterion = nn.CrossEntropyLoss()
-  optimizer = optim.SGD(nplm.parameters(), lr=0.001, momentum=0.9)
+  optimizer = optim.SGD(nplm.parameters(), lr=0.001,
+                        weight_decay=1e-7, momentum=0.9)
 
   loss_p = float("Inf")
   for epoch in range(10000):
     running_loss = 0.0
+    acc = 0
     for i, data in enumerate(train_dataloader):
       inputs, labels = data
+      inputs = inputs.to(device)
+      labels = labels.to(device)
       outputs = nplm(inputs)
       optimizer.zero_grad()
       loss = criterion(outputs, labels)
       loss.backward()
       optimizer.step()
       running_loss += loss.item()
-      val_loss, val_acc = nplm.predict(data_val, batch_size=batch_size)
-      print('[epoch: %d] train_loss: %f val_loss: %f val_acc: %f' %
-            (epoch + 1, running_loss / len(wikiData), val_loss, val_acc))
-      if running_loss < loss_p:
-        model_name = MODEL_PATH + '/nplm_epoch' + \
-            str(epoch+1) + '_acc' + str(val_acc) + '.pth'
-        torch.save(nplm.state_dict(), model_name)
-        print("    model saved.")
-        test_loss, test_acc = nplm.predict(data_test, batch_size=batch_size)
-        print('    test_loss: %f test_acc: %f' % (test_loss, test_acc))
-        loss_p = running_loss
+      for j in range(batch_size):
+        values, indices = torch.max(outputs[j], 0)
+        if indices.item() == labels[j].item():
+          acc += 1
+    test_loss, test_acc = nplm.predict(
+        test_dataloader, batch_size=batch_size)
+    print('[epoch: %d] train_loss: %f train_acc: %f test_loss: %f test_acc: %f' %
+          (epoch + 1, running_loss / len(train_data), acc / len(train_data), test_loss, test_acc))
+    if running_loss < loss_p:
+      model_name = MODEL_PATH + '/nplm_epoch' + \
+          str(epoch+1) + '_acc' + str(test_acc) + '.pth'
+      torch.save(nplm.state_dict(), model_name)
+      print("    model saved.")
+      loss_p = running_loss
 
 
 if __name__ == '__main__':
